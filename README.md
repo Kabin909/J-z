@@ -1,52 +1,130 @@
-# J&Z Panel — clean VPS foundation
+# J&Z Panel
 
-This is a **new project**, independent of the old J&Z ZIP. It contains no VPS IP, SSH username, SSH password, or other private deployment details.
+J&Z Panel is a premium hosting control panel built from the supplied panel source.
 
-## What this release fixes
+## Branding
 
-- Correct `ioredis` default import for the worker TypeScript build.
-- Pinned package versions instead of floating `latest` versions.
-- Node 22 + npm 10 compatibility target.
-- Docker Compose health checks for PostgreSQL, Redis and API.
-- Internal API/WebSocket ports bound to `127.0.0.1` instead of being exposed publicly.
-- Robust Debian 12+/Ubuntu 22.04+ checks.
-- Docker CE + Buildx + Compose plugin installation when Docker is missing.
-- Duplicate Sury PHP source detection/disablement for the common duplicate-source warning.
-- Nginx configuration validation before reload.
-- Domain validation and VPS-IP fallback.
-- Optional Let's Encrypt HTTPS with an explicit email prompt.
-- UFW rules that preserve the detected SSH port.
-- Persistent installer log at `/var/log/jz-panel-install.log`.
-- Secrets generated locally with OpenSSL and never hardcoded.
-- Browser favicon only; no forced logo on the web page.
+- Application name: J&Z Panel
+- Logo: `public/images/jz-logo.png`
+- Replace `public/images/jz-logo.png` with your own transparent PNG logo to change the branding without editing React components.
 
-## Important scope
+## UI
 
-This ZIP is a **foundation release**, not yet a finished Pterodactyl replacement. The production authentication system, user/admin RBAC, server lifecycle API, file manager, plugin/mod manager, node registration protocol, and complete Wings daemon still require implementation and integration tests. The installer therefore does not pretend that a missing Wings implementation is already production-ready.
+The user and administrator interfaces use the J&Z dark glass hosting theme with responsive navigation, emoji-assisted navigation, animated cards, forms, authentication screens, and console styling.
 
-## Install
+[![Logo Image](https://cdn.pterodactyl.io/logos/new/pterodactyl_logo.png)](https://pterodactyl.io)
+
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/pterodactyl/panel/ci.yaml?label=Tests&style=for-the-badge&branch=1.0-develop)
+![Discord](https://img.shields.io/discord/122900397965705216?label=Discord&logo=Discord&logoColor=white&style=for-the-badge)
+![GitHub Releases](https://img.shields.io/github/downloads/pterodactyl/panel/latest/total?style=for-the-badge)
+![GitHub contributors](https://img.shields.io/github/contributors/pterodactyl/panel?style=for-the-badge)
+
+# Pterodactyl Panel
+
+Pterodactyl® is a free, open-source game server management panel built with PHP, React, and Go. Designed with security
+in mind, Pterodactyl runs all game servers in isolated Docker containers while exposing a beautiful and intuitive
+UI to end users.
+
+Stop settling for less. Make game servers a first class citizen on your platform.
+
+![Image](https://cdn.pterodactyl.io/site-assets/pterodactyl_v1_demo.gif)
+
+## Documentation
+
+* [Panel Documentation](https://pterodactyl.io/panel/1.0/getting_started.html)
+* [Wings Documentation](https://pterodactyl.io/wings/1.0/installing.html)
+* [Community Guides](https://pterodactyl.io/community/about.html)
+* Or, get additional help [via Discord](https://discord.gg/pterodactyl)
+
+## Sponsors
+
+I would like to extend my sincere thanks to the following sponsors for helping fund Pterodactyl's development.
+[Interested in becoming a sponsor?](https://github.com/sponsors/pterodactyl)
+
+| Company                                                                           | About                                                                                                                                                                                                                                           |
+|-----------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [**Buildurly**](https://buildurly.com/)                                           | Buildurly is a hardware procurement company. They deliver tailored, enterprise-grade hardware solutions designed around your unique needs. From sourcing to delivery, Buildurly's white-glove service ensures a seamless, worry-free, professional experience.                                                                                                                                          |
+| [**Hosturly**](https://hosturly.com/)                                             | Hosturly is an enterprise hosting provider. They provide cost-effective, high-performance, and reliable services, including VPS, Web, Dedicated, and Colocation.                                                                                |
+| [**indifferent broccoli**](https://indifferentbroccoli.com/)                      | indifferent broccoli is a game server hosting and rental company. With them, you get top-notch computer power for your gaming sessions. They destroy lag, latency, and complexity--letting you focus on the fun stuff.                         |
+| [**Infraly, LLC**](https://infraly.co/)                                           | Infraly is an infrastructure company powering the next generation of online services. Through their brands, Infraly delivers cutting-edge solutions across multiple markets. Their vertically integrated approach provides unmatched performance, scalability, and reliability, giving our customers full control.                                                                                     |
+| [**MineStrator**](https://minestrator.com/)                                       | MineStrator is a game server hosting provider. Looking for the most high-end French hosting company for your Minecraft server? More than 24,000 members on our Discord trust us. Give us a try!                                                |
+| [**Physgun**](https://physgun.com/)                                               | Physgun is a game server hosting provider. Most providers rent rack space and rebrand a panel. At Physgun, they engineer the performance, write the features, and staff the support. Physgun truly is game hosting perfected!                   |
+| [**WISP**](https://wisp.gg/)                                                      | WISP is an industry-leading SaaS platform for game server management, designed for hosting companies, gaming organizations, and enthusiasts. WISP combines modern, intuitive interfaces with powerful tools, making server deployment and administration seamless, scalable, and efficient.                                                                                                                 |
+
+
+### Supported Games
+
+Pterodactyl supports a wide variety of games by utilizing Docker containers to isolate each instance. This gives
+you the power to run game servers without bloating machines with a host of additional dependencies.
+
+Some of our core supported games include:
+
+* Minecraft — including Paper, Sponge, Bungeecord, Waterfall, and more
+* Rust
+* Terraria
+* Teamspeak
+* Mumble
+* Team Fortress 2
+* Counter Strike: Global Offensive
+* Garry's Mod
+* ARK: Survival Evolved
+
+In addition to our standard nest of supported games, our community is constantly pushing the limits of this software
+and there are plenty more games available provided by the community. Some of these games include:
+
+* Factorio
+* San Andreas: MP
+* Pocketmine MP
+* Squad
+* Xonotic
+* Starmade
+* Discord ATLBot, and most other Node.js/Python discord bots
+* [and many more...](https://eggs.pterodactyl.io)
+
+## License
+
+Pterodactyl® Copyright © 2015 - 2022 Dane Everitt and contributors.
+
+Code released under the [MIT License](./LICENSE.md).
+
+## J&Z Panel — One-Command Installer
+
+The project includes `install.sh`, an interactive management utility for a fresh Ubuntu 22.04+/Debian 12+ server.
+
+Run it from the extracted project as root:
 
 ```bash
-sudo bash install.sh
+chmod +x install.sh
+sudo ./install.sh
 ```
 
-The installer asks for the panel domain. Leave it blank to use the VPS public IPv4 address.
+The menu provides:
 
-For a public domain, point DNS to the VPS first. HTTPS can then be enabled during installation.
+- 🖥️ Install J&Z Panel
+- 🪽 Install J&Z Wings
+- 🗑️ Uninstall J&Z Panel
+- 🗑️ Uninstall J&Z Wings
+- 🔄 Update J&Z Panel
+- 🔄 Update J&Z Wings
+- 🛠️ Repair J&Z Panel
+- 🛠️ Repair J&Z Wings
+- 📦 Install from a public source ZIP URL
+- 🚪 Exit
 
-## 🗄️ Database migration system
+### One-command remote source install
 
-J&Z Panel v3.2.0 uses explicit, versioned PostgreSQL migrations. The Docker PostgreSQL container no longer mounts the migration directory as an automatic `docker-entrypoint-initdb.d` script directory. The installer starts PostgreSQL/Redis first and then runs `installer/migrate.sh`.
-
-Migration state is stored in `schema_migrations` with the migration version, name, SHA-256 checksum, and application timestamp. Each pending migration runs inside a PostgreSQL transaction. Applied migrations are skipped; a checksum mismatch stops the deployment instead of silently changing an already-applied migration.
-
-Existing J&Z databases that were created by the older installer are adopted at migration `001` as a baseline without executing `001_init.sql` again, then any newer migrations are applied normally.
-
-To inspect migration state:
+If the J&Z Panel source ZIP is hosted at a URL, the installer can download it automatically:
 
 ```bash
-cd /opt/jz-panel
-./installer/migrate.sh
+sudo bash install.sh --source-url https://example.com/JZ-Panel.zip
 ```
 
-New schema changes must be added as a new numbered file such as `003_feature_name.sql`; never edit an already-applied migration.
+Or set `JZ_PANEL_SOURCE_URL` before running the installer.
+
+### Logo
+
+Replace the bundled logo at:
+
+`public/images/jz-logo.png`
+
+The installer preserves the panel source and existing `.env` during update/repair operations. Destructive uninstall actions require confirmation and retain a timestamped panel backup directory.
