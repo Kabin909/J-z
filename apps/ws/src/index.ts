@@ -11,7 +11,7 @@ if(!databaseUrl) throw new Error('DATABASE_URL must be configured');
 const db=new Pool({connectionString:databaseUrl});
 const hash=(s:string)=>crypto.createHash('sha256').update(s).digest('hex');
 await app.register(cookie,{secret:cookieSecret}); await app.register(websocket);
-app.get('/health',async()=>({ok:true,service:'jz-websocket',version:'0.5.0',time:new Date().toISOString()}));
+app.get('/health',async()=>({ok:true,service:'jz-websocket',version:'0.8.0',time:new Date().toISOString()}));
 async function sessionUser(raw:string|undefined){if(!raw)return null;const q=await db.query('select u.id,u.username from sessions s join users u on u.id=s.user_id where s.token_hash=$1 and s.expires_at>now() and u.disabled_at is null limit 1',[hash(raw)]);return q.rows[0]||null;}
 app.get('/api/ws/console',{websocket:true},async(socket,req)=>{
   const user=await sessionUser((req.cookies as any)?.jz_session);

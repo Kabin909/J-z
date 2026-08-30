@@ -1,3 +1,11 @@
+## 0.8.0 — Production installer and control actions
+
+- Domain-first installer flow with optional HTTPS.
+- Bootstrap administrator creation.
+- Robust ioredis loading for NodeNext builds.
+- Wings command execution and Panel file/log APIs.
+- Safer node signature validation.
+
 ## 0.5.0 — Full-stack runtime hardening
 
 - Fixed authenticated Wings container creation path used by worker installation jobs.

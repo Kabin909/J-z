@@ -21,7 +21,7 @@ import (
 	"github.com/docker/docker/client"
 )
 
-const version = "0.5.0"
+const version = "0.8.0"
 
 type Wings struct {
 	secret                 string
@@ -244,6 +244,24 @@ func (w *Wings) fileAction(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "unsupported action", 400)
 	}
 }
+func (w *Wings) command(rw http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/v1/servers/")
+	id = strings.TrimSuffix(id, "/command")
+	if id == "" || strings.Contains(id, "/") { http.Error(rw, "bad server id", 400); return }
+	var b struct{ Command string `json:"command"` }
+	if err := json.NewDecoder(r.Body).Decode(&b); err != nil || strings.TrimSpace(b.Command) == "" { http.Error(rw, "command required", 400); return }
+	if len(b.Command) > 4000 { http.Error(rw, "command too long", 413); return }
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second); defer cancel()
+	execCfg, err := w.docker.ContainerExecCreate(ctx, id, types.ExecConfig{Cmd: []string{"/bin/sh", "-lc", b.Command}, AttachStdout: true, AttachStderr: true, Tty: false})
+	if err != nil { http.Error(rw, "exec create failed", 409); return }
+	attached, err := w.docker.ContainerExecAttach(ctx, execCfg.ID, types.ExecStartCheck{})
+	if err != nil { http.Error(rw, "exec attach failed", 409); return }
+	defer attached.Close()
+	if err := w.docker.ContainerExecStart(ctx, execCfg.ID, types.ExecStartCheck{}); err != nil { http.Error(rw, "exec start failed", 409); return }
+	out, _ := io.ReadAll(io.LimitReader(attached.Reader, 2<<20))
+	jsonOut(rw, map[string]any{"ok": true, "output": string(out), "command": b.Command})
+}
+
 func (w *Wings) serverAction(rw http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/v1/servers/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
@@ -325,6 +343,10 @@ func main() {
 	})))
 	mux.Handle("/v1/servers", w.guard(http.HandlerFunc(w.createServer)))
 	mux.Handle("/v1/servers/", w.guard(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/command") {
+			w.command(rw, r)
+			return
+		}
 		if strings.Contains(r.URL.Path, "/files-") {
 			w.fileAction(rw, r)
 			return
