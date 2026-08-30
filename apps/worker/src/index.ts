@@ -19,7 +19,7 @@ async function handle(job:any){const q=await db.query(`select s.*,n.address from
     if(s.auto_start){await nodeRequest(s.node_id,`/v1/servers/${created.container_id}/start`,'POST',{});await setStatus(s.id,'RUNNING',created.container_id);}else await setStatus(s.id,'STOPPED',created.container_id);
     return;
   }
-  const containerId=s.container_id;if(job.type==='server.command'){if(!containerId)throw new Error('container_not_ready');const out=await nodeRequest(s.node_id,`/v1/servers/${containerId}/command`,'POST',{command:job.command});await db.query('insert into server_events(server_id,type,payload) values($1,$2,$3)',[s.id,'command.completed',JSON.stringify({command:job.command,output:out.output||''})]);return;}if(job.type==='server.delete'){if(containerId){try{await nodeRequest(s.node_id,`/v1/servers/${containerId}/delete`,'POST',{});}catch{}}await db.query('delete from servers where id=$1',[s.id]);return;}if(!containerId)throw new Error('container_not_ready');
+  const containerId=s.container_id;if(job.type==='server.delete'){if(containerId){try{await nodeRequest(s.node_id,`/v1/servers/${containerId}/delete`,'POST',{});}catch{}}await db.query('delete from servers where id=$1',[s.id]);return;}if(!containerId)throw new Error('container_not_ready');
   const map:any={start:'STARTING',stop:'STOPPING',restart:'RESTARTING',kill:'STOPPING'};await setStatus(s.id,map[job.type.replace('server.','')]||'INSTALLING',containerId);
   await nodeRequest(s.node_id,`/v1/servers/${containerId}/${job.type.replace('server.','')}`,'POST',{});
   await setStatus(s.id,job.type==='server.start'||job.type==='server.restart'?'RUNNING':'STOPPED',containerId);

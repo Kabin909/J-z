@@ -1,4 +1,4 @@
-## 0.7.0 — Full-stack runtime hardening
+## 0.5.0 — Full-stack runtime hardening
 
 - Fixed authenticated Wings container creation path used by worker installation jobs.
 - Added safe node filesystem operations rooted under `/var/lib/jz-wings/servers/<id>`.
@@ -66,9 +66,3 @@
 - Added installer VPS workflow and expanded command/reference documentation.
 - Added production threat model and explicit production-gap register.
 - Expanded the UI module pages to read real backend records instead of showing only static placeholders.
-
-## 0.7.0
-- Unified installer bootstrap for raw GitHub execution.
-- Added authenticated server command and file-management API paths.
-- Added Wings command execution bridge and safer management backups.
-- Tightened admin user visibility and production deployment checks.

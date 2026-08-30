@@ -1,51 +1,23 @@
-# 🟧 J&Z Panel v0.6
+# J&Z Panel 0.7.1
 
-J&Z Panel is an original, full-stack Minecraft infrastructure control plane with a modern dark/orange UI and a J&Z Wings node architecture.
-
-> This project intentionally does **not** copy Pterodactyl's visual design. It provides a separate J&Z interface around the same class of infrastructure concepts: servers, nodes, console, files, backups, databases, allocations and administration.
-
-## UI
-
-The web application includes:
-
-- Dashboard / telemetry
-- Servers
-- Live console surface
-- Files
-- Backups
-- Databases
-- Network / allocations
-- Activity / audit
-- Nodes / Wings
-- Users
-- Eggs
-- Domains
-- Plugins
-- Security
-- Settings
-- Responsive mobile navigation
-
-See `docs/UI-FEATURES.md` for the complete UI map.
-
-## Install
+## Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kabin909/J-ZPanel/main/installer/install.sh -o /tmp/jz-install.sh && sudo bash /tmp/jz-install.sh
+curl -fsSL https://raw.githubusercontent.com/Kabin909/J-z/main/installer/install.sh -o /tmp/jz-install.sh && sudo bash /tmp/jz-install.sh
 ```
 
-For a production domain, point `panel.example.com` to the VPS public IP before enabling HTTPS.
+The installer can deploy Panel, Wings, or both. It creates `.env` when `.env.example` is missing and builds the services with Docker Compose.
 
-## Important
+## Build failure: `Could not find a declaration file for module 'pg'`
+The API, worker, and WebSocket packages include local `pg` declarations and the API package also includes `@types/pg`, preventing this TypeScript failure.
 
-The repository contains J&Z-owned application code and integration code. Upstream third-party components are downloaded by the installer rather than silently copied into this repository. Do not publish secrets, generated credentials, `node_modules`, build output, or production database files.
+## Production domain
+Point `panel.example.com` to the VPS, select Panel or Panel + Wings, and enter the domain when prompted. The installer configures Nginx and can request a Let's Encrypt certificate.
 
-
-## One-line VPS bootstrap
-
-The installer can now be downloaded directly to `/tmp`; it bootstraps the complete repository into `/opt/jz-panel` automatically.
+## Management
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Kabin909/J-ZPanel/main/installer/install.sh -o /tmp/jz-install.sh && sudo bash /tmp/jz-install.sh
+sudo jz-panel
 ```
 
-For a production Panel + Wings deployment, choose `1`, use a real Panel hostname such as `panel.example.com`, then provide the Wings public API address (normally `http://NODE_IP:8080` or an HTTPS reverse-proxy address).
+Available operations include status/health, repair, update, backup, and uninstall.

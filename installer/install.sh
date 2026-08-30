@@ -1,25 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
-VERSION="0.7.0"
+VERSION="0.7.1"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_URL="${JZ_REPO_URL:-https://github.com/Kabin909/J-ZPanel.git}"
 STATE=/etc/jz-panel
-# The public one-line installer is often downloaded to /tmp. In that case,
-# bootstrap a complete working checkout before doing any local build steps.
-if [[ ! -f "$ROOT/package.json" || ! -d "$ROOT/apps" ]]; then
-  BOOTSTRAP_DIR="/opt/jz-panel"
-  mkdir -p "$BOOTSTRAP_DIR"
-  if [[ ! -f "$BOOTSTRAP_DIR/package.json" ]]; then
-    tmp="$(mktemp -d)"
-    curl -fsSL "${JZ_REPO_ARCHIVE_URL:-https://github.com/Kabin909/J-ZPanel/archive/refs/heads/main.tar.gz}" -o "$tmp/jz.tar.gz"
-    tar -xzf "$tmp/jz.tar.gz" -C "$tmp"
-    src="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -1)"
-    cp -a "$src"/. "$BOOTSTRAP_DIR"/
-    rm -rf "$tmp"
-  fi
-  exec bash "$BOOTSTRAP_DIR/installer/install.sh" "$@"
-fi
 LOG=/var/log/jz-panel-install.log
 ORANGE='\033[38;5;208m'; WHITE='\033[97m'; GREEN='\033[92m'; RED='\033[91m'; CYAN='\033[96m'; RESET='\033[0m'
 mkdir -p "$STATE"; touch "$LOG"; chmod 600 "$LOG"
@@ -28,7 +12,7 @@ trap 'rc=$?; echo -e "${RED}❌ Failed at line ${LINENO} (exit ${rc}).${RESET}";
 ok(){ echo -e "${GREEN}✅ $*${RESET}"; }; warn(){ echo -e "${ORANGE}⚠️  $*${RESET}"; }; die(){ echo -e "${RED}❌ $*${RESET}"; exit 1; }; section(){ echo -e "\n${ORANGE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n${WHITE}$*${RESET}"; }
 root(){ [[ $EUID -eq 0 ]] || die "Run as root or with sudo."; }
 os(){ . /etc/os-release; case "$ID" in debian|ubuntu) ;; *) die "Supported: Debian/Ubuntu.";; esac; ok "System: $PRETTY_NAME / $(dpkg --print-architecture)"; }
-apt(){ export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y ca-certificates curl git jq openssl python3 nginx ufw docker.io || true; apt-get install -y docker-compose-plugin 2>/dev/null || apt-get install -y docker-compose-v2 2>/dev/null || true; command -v docker >/dev/null || die "Docker installation failed."; docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required. Install docker-compose-plugin/docker-compose-v2."; systemctl enable --now docker nginx; }
+apt(){ export DEBIAN_FRONTEND=noninteractive; apt-get update -y; apt-get install -y ca-certificates curl git jq openssl python3 nginx ufw docker.io docker-compose-plugin; systemctl enable --now docker nginx; }
 secrets(){ [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"; python3 - "$ROOT/.env" <<'PY'
 from pathlib import Path
 import secrets,re,sys
@@ -46,7 +30,7 @@ web(){ local domain="$1"; [[ "$domain" =~ ^[A-Za-z0-9.-]+$ ]] || die "Invalid do
 server { listen 80; server_name $domain; client_max_body_size 200m;
  location / { proxy_pass http://127.0.0.1:5173; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; }
  location /api/ { proxy_pass http://127.0.0.1:4000/api/; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; }
- location /ws/ { proxy_pass http://127.0.0.1:4001/; proxy_http_version 1.1; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host \$host; }
+ location /ws/ { proxy_pass http://127.0.0.1:4001/api/ws/; proxy_http_version 1.1; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host \$host; }
 }
 NG
 ln -sfn /etc/nginx/sites-available/jz-panel.conf /etc/nginx/sites-enabled/jz-panel.conf; rm -f /etc/nginx/sites-enabled/default; nginx -t; systemctl reload nginx; printf '%s\n' "$domain" >"$STATE/domain"; ok "Domain proxy ready: http://$domain"; }
@@ -70,7 +54,6 @@ systemctl daemon-reload
 TOKEN=$(grep '^JZ_BOOTSTRAP_TOKEN=' "$ROOT/.env" | cut -d= -f2-)
 for i in $(seq 1 40); do curl -fsS http://127.0.0.1:4000/api/ready >/dev/null && break || sleep 2; done
 NODE_NAME="${JZ_NODE_NAME:-Local-01}"; NODE_ADDRESS="${JZ_NODE_ADDRESS:-http://127.0.0.1:8080}"
-read -rp "🪽 Wings public API address [$NODE_ADDRESS]: " entered_address; NODE_ADDRESS="${entered_address:-$NODE_ADDRESS}"
 R=$(curl -fsS -X POST http://127.0.0.1:4000/api/bootstrap/local-node -H 'content-type: application/json' -H "x-jz-bootstrap-token: $TOKEN" -d "{\"name\":\"$NODE_NAME\",\"address\":\"$NODE_ADDRESS\",\"location\":\"local\"}") || die "Panel node bootstrap failed. Check $LOG"
 NODE_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["node"]["id"])' <<<"$R"); SECRET=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["secret"])' <<<"$R")
 cat >/etc/jz/wings.env <<EOF2

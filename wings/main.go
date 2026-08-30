@@ -21,7 +21,7 @@ import (
 	"github.com/docker/docker/client"
 )
 
-const version = "0.7.0"
+const version = "0.5.0"
 
 type Wings struct {
 	secret                 string
@@ -265,17 +265,6 @@ func (w *Wings) serverAction(rw http.ResponseWriter, r *http.Request) {
 		err = w.docker.ContainerKill(ctx, id, "SIGKILL")
 	case "delete":
 		err = w.docker.ContainerRemove(ctx, id, types.ContainerRemoveOptions{Force: true, RemoveVolumes: false})
-	case "command":
-		var b struct { Command string `json:"command"` }
-		if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Command) == "" { http.Error(rw, "command required", 400); return }
-		ex, e := w.docker.ContainerExecCreate(ctx, id, types.ExecConfig{Cmd: []string{"/bin/sh", "-lc", b.Command}, AttachStdout: true, AttachStderr: true, Tty: false})
-		if e != nil { http.Error(rw, "exec create failed", 409); return }
-		stream, e := w.docker.ContainerExecAttach(ctx, ex.ID, types.ExecStartCheck{})
-		if e != nil { http.Error(rw, "exec attach failed", 409); return }
-		bout, _ := io.ReadAll(io.LimitReader(stream.Reader, 8<<20)); _ = stream.Close()
-		info, _ := w.docker.ContainerExecInspect(ctx, ex.ID)
-		jsonOut(rw, map[string]any{"ok": true, "output": string(bout), "exit_code": info.ExitCode})
-		return
 	case "logs":
 		out, e := w.docker.ContainerLogs(ctx, id, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "200"})
 		if e != nil {
