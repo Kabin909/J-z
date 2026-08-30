@@ -1,8 +1,9 @@
 .git
-.github
+.gitignore
+.env
+npm-debug.log*
 node_modules
 **/node_modules
 **/dist
-*.log
-.env
-wings/jz-wings
+Dockerfile*
+README.md

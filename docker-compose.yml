@@ -1,118 +1,66 @@
 services:
   postgres:
-    init: true
-    restart: unless-stopped
-    image: postgres:17-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-jz}
       POSTGRES_USER: ${POSTGRES_USER:-jz}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}
-    ports:
-      - "127.0.0.1:5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
-      - jz_pg:/var/lib/postgresql/data
-      - ./packages/db/migrations:/docker-entrypoint-initdb.d:ro
+      - jz-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jz} -d ${POSTGRES_DB:-jz}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 10
-      start_period: 5s
+      retries: 20
+
   redis:
-    init: true
-    restart: unless-stopped
     image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 10
-      start_period: 3s
+      retries: 20
+
   api:
-    init: true
-    restart: unless-stopped
-    build: {context: ., dockerfile: docker/api/Dockerfile}
+    build: {context: ., dockerfile: apps/api/Dockerfile}
+    env_file: .env
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
-      DATABASE_SSL: ${DATABASE_SSL:-false}
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET:-jz-local-jwt-secret-change-me-1234567890}
-      COOKIE_SECRET: ${COOKIE_SECRET:-jz-local-cookie-secret-change-me-1234567890}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:5173}
-      API_PORT: 4000
-      WINGS_SHARED_SECRET: ${WINGS_SHARED_SECRET:-jz-local-wings-secret-change-me-1234567890}
-      NODE_ENCRYPTION_KEY: ${NODE_ENCRYPTION_KEY:-jz-local-node-encryption-key-1234567890}
-      JZ_BOOTSTRAP_TOKEN: ${JZ_BOOTSTRAP_TOKEN:-jz-local-bootstrap-token-change-me-1234567890}
+      PORT: 4000
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/ready >/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 8s
     ports: ["127.0.0.1:4000:4000"]
-  worker:
-    init: true
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    build: {context: ., dockerfile: docker/worker/Dockerfile}
-    environment:
-      REDIS_URL: redis://redis:6379
-      DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
-      DATABASE_SSL: ${DATABASE_SSL:-false}
-      NODE_ENCRYPTION_KEY: ${NODE_ENCRYPTION_KEY:-jz-local-node-encryption-key-1234567890}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    build: {context: ., dockerfile: apps/worker/Dockerfile}
+    env_file: .env
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"process.exit(0)\""]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
+    restart: unless-stopped
+
   ws:
-    init: true
-    restart: unless-stopped
-    build: {context: ., dockerfile: docker/ws/Dockerfile}
+    build: {context: ., dockerfile: apps/ws/Dockerfile}
+    env_file: .env
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      API_PORT: 4000
-      WS_PORT: 4001
-      DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
-      DATABASE_SSL: ${DATABASE_SSL:-false}
-      COOKIE_SECRET: ${COOKIE_SECRET:-jz-local-cookie-secret-change-me-1234567890}
-      WINGS_SHARED_SECRET: ${WINGS_SHARED_SECRET:-jz-local-wings-secret-change-me-1234567890}
-      NODE_ENCRYPTION_KEY: ${NODE_ENCRYPTION_KEY:-jz-local-node-encryption-key-1234567890}
-      JZ_BOOTSTRAP_TOKEN: ${JZ_BOOTSTRAP_TOKEN:-jz-local-bootstrap-token-change-me-1234567890}
-    depends_on:
-      api: {condition: service_healthy}
-      postgres: {condition: service_healthy}
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4001/health >/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 5s
+      PORT: 4001
     ports: ["127.0.0.1:4001:4001"]
-  web:
-    init: true
+    depends_on: [api, redis]
     restart: unless-stopped
-    build: {context: ., dockerfile: docker/web/Dockerfile}
-    depends_on:
-      api: {condition: service_healthy}
-      postgres: {condition: service_healthy}
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-      start_period: 3s
+
+  web:
+    build: {context: ., dockerfile: apps/web/Dockerfile}
+    depends_on: [api]
     ports: ["127.0.0.1:5173:80"]
+    restart: unless-stopped
+
 volumes:
-  jz_pg:
+  jz-postgres:

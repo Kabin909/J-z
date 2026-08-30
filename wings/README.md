@@ -1,0 +1,2 @@
+# J&Z Wings
+Wings is the node/daemon component. This initial scaffold reserves the daemon boundary for Docker-backed server lifecycle management, node authentication, console streaming and resource accounting.

@@ -1,38 +1,35 @@
-# J&Z Panel 0.7.1
+# J&Z Panel — clean VPS foundation
 
-## Quick install
+This is a **new project**, independent of the old J&Z ZIP. It contains no VPS IP, SSH username, SSH password, or other private deployment details.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Kabin909/J-z/main/installer/install.sh -o /tmp/jz-install.sh && sudo bash /tmp/jz-install.sh
-```
+## What this release fixes
 
-The installer can deploy Panel, Wings, or both. It creates `.env` when `.env.example` is missing and builds the services with Docker Compose.
+- Correct `ioredis` default import for the worker TypeScript build.
+- Pinned package versions instead of floating `latest` versions.
+- Node 22 + npm 10 compatibility target.
+- Docker Compose health checks for PostgreSQL, Redis and API.
+- Internal API/WebSocket ports bound to `127.0.0.1` instead of being exposed publicly.
+- Robust Debian 12+/Ubuntu 22.04+ checks.
+- Docker CE + Buildx + Compose plugin installation when Docker is missing.
+- Duplicate Sury PHP source detection/disablement for the common duplicate-source warning.
+- Nginx configuration validation before reload.
+- Domain validation and VPS-IP fallback.
+- Optional Let's Encrypt HTTPS with an explicit email prompt.
+- UFW rules that preserve the detected SSH port.
+- Persistent installer log at `/var/log/jz-panel-install.log`.
+- Secrets generated locally with OpenSSL and never hardcoded.
+- Browser favicon only; no forced logo on the web page.
 
-## Build failure: `Could not find a declaration file for module 'pg'`
-The API, worker, and WebSocket packages include local `pg` declarations and the API package also includes `@types/pg`, preventing this TypeScript failure.
+## Important scope
 
-## Production domain
-Point `panel.example.com` to the VPS, select Panel or Panel + Wings, and enter the domain when prompted. The installer configures Nginx and can request a Let's Encrypt certificate.
+This ZIP is a **foundation release**, not yet a finished Pterodactyl replacement. The production authentication system, user/admin RBAC, server lifecycle API, file manager, plugin/mod manager, node registration protocol, and complete Wings daemon still require implementation and integration tests. The installer therefore does not pretend that a missing Wings implementation is already production-ready.
 
-## Management
-
-```bash
-sudo jz-panel
-```
-
-Available operations include status/health, repair, update, backup, and uninstall.
-
-
-## v0.8.0-patch1 installer/build fixes
-
-This release fixes the Docker build issue caused by the `ioredis` TypeScript constructor import in the API/worker workspaces. It also makes the installer safer around `.env` creation, bundled PostgreSQL TLS, DNS/HTTPS ordering, and failed Docker builds.
-
-Before installation:
+## Install
 
 ```bash
-cd /opt/jz-panel
-bash installer/preflight.sh
-sudo bash installer/install.sh
+sudo bash install.sh
 ```
 
-For a domain, point its A record to the VPS IPv4 first. The installer verifies DNS before requesting Let's Encrypt. If DNS is not ready, it leaves the panel on HTTP rather than failing the installation.
+The installer asks for the panel domain. Leave it blank to use the VPS public IPv4 address.
+
+For a public domain, point DNS to the VPS first. HTTPS can then be enabled during installation.

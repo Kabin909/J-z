@@ -1,25 +1,9 @@
 {
   "name": "jz-panel",
   "private": true,
-  "version": "0.8.0",
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
-  "scripts": {
-    "dev": "npm --workspace @jz/web run dev",
-    "dev:web": "npm --workspace apps/web run dev",
-    "dev:api": "npm --workspace apps/api run dev",
-    "dev:worker": "npm --workspace apps/worker run dev",
-    "dev:ws": "npm --workspace apps/ws run dev",
-    "build": "npm run build:web && npm run build:api",
-    "build:web": "npm --workspace @jz/web run build",
-    "build:api": "npm --workspace apps/api run build",
-    "build:worker": "npm --workspace apps/worker run build",
-    "build:wings": "cd wings && go build -o jz-wings .",
-    "doctor": "bash installer/install.sh"
-  },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
-  }
+  "version": "1.0.0",
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": {"node": ">=22 <23", "npm": ">=10"},
+  "scripts": {"build": "npm run build --workspaces --if-present"}
 }

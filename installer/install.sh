@@ -1,227 +1,295 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 IFS=$'\n\t'
-VERSION="0.8.0"
+VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE=/etc/jz-panel
 LOG=/var/log/jz-panel-install.log
-ORANGE='\033[38;5;208m'; WHITE='\033[97m'; GREEN='\033[92m'; RED='\033[91m'; CYAN='\033[96m'; RESET='\033[0m'
-mkdir -p "$STATE"; touch "$LOG"; chmod 600 "$LOG"
+mkdir -p "$STATE"
+touch "$LOG"; chmod 600 "$LOG"
 exec > >(tee -a "$LOG") 2>&1
-on_error(){ rc=$?; echo -e "${RED}❌ Installer failed at line ${LINENO} (exit ${rc}).${RESET}"; echo -e "${CYAN}📋 Log: $LOG${RESET}"; exit "$rc"; }
-trap on_error ERR
-ok(){ echo -e "${GREEN}✅ $*${RESET}"; }; warn(){ echo -e "${ORANGE}⚠️  $*${RESET}"; }; die(){ echo -e "${RED}❌ $*${RESET}"; exit 1; }
-section(){ echo -e "\n${ORANGE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n${WHITE}$*${RESET}"; }
-root(){ [[ $EUID -eq 0 ]] || die "Run as root: sudo bash installer/install.sh"; }
-os(){ . /etc/os-release; case "$ID" in debian|ubuntu) ;; *) die "Supported OS: Debian 12+ or Ubuntu 22.04+.";; esac; ok "System: $PRETTY_NAME / $(dpkg --print-architecture)"; }
-validate_domain(){ local d="$1"; [[ -z "$d" || "$d" == "localhost" || "$d" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ || "$d" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || die "Invalid domain/IP: $d"; }
-get_public_ip(){ curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}'; }
-apt(){ export DEBIAN_FRONTEND=noninteractive; section "📦 Installing system dependencies"; apt-get update -y; apt-get install -y ca-certificates curl git jq openssl python3 nginx ufw docker.io docker-compose-plugin golang-go; systemctl enable --now docker nginx; docker info >/dev/null || die "Docker daemon is not available."; docker compose version >/dev/null || die "Docker Compose plugin is missing."; }
-secret(){ python3 - <<'PY'
-import secrets
-print(secrets.token_urlsafe(48))
-PY
+
+err(){ local rc=$?; echo "❌ Installer failed at line $1 (exit $rc)."; echo "📋 Log: $LOG"; exit "$rc"; }
+trap 'err $LINENO' ERR
+ok(){ echo "✅ $*"; }
+warn(){ echo "⚠️  $*"; }
+die(){ echo "❌ $*"; exit 1; }
+section(){ printf '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n%s\n' "$*"; }
+
+require_root(){ [[ $EUID -eq 0 ]] || die "Run as root: sudo bash installer/install.sh"; }
+check_os(){
+  . /etc/os-release
+  case "$ID" in
+    debian) [[ "${VERSION_ID%%.*}" -ge 12 ]] || die "Debian 12+ required." ;;
+    ubuntu) [[ "${VERSION_ID%%.*}" -ge 22 ]] || die "Ubuntu 22.04+ required." ;;
+    *) die "Supported OS: Debian 12+ or Ubuntu 22.04+." ;;
+  esac
+  case "$(dpkg --print-architecture)" in amd64|arm64) ;; *) die "Supported architectures: amd64 or arm64.";; esac
+  ok "System: $PRETTY_NAME / $(dpkg --print-architecture)"
 }
+
+fix_duplicate_sury(){
+  local a=/etc/apt/sources.list.d/php.list b=/etc/apt/sources.list.d/sury-php.list
+  [[ -f "$a" && -f "$b" ]] || return 0
+  if grep -q 'packages.sury.org/php' "$a" && grep -q 'packages.sury.org/php' "$b"; then
+    # Keep the newer/common sury-php filename and disable the duplicate only.
+    mv -f "$a" "${a}.disabled-by-jz"
+    warn "Disabled duplicate Sury PHP source: $a"
+  fi
+}
+
+install_docker(){
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    systemctl enable --now docker
+    ok "Docker and Compose already available."
+    return
+  fi
+  section "🐳 Installing Docker"
+  apt-get update -y
+  apt-get install -y ca-certificates curl gnupg
+  install -d -m 0755 /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/${ID}/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  local arch; arch="$(dpkg --print-architecture)"
+  echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" >/etc/apt/sources.list.d/docker.list
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  systemctl enable --now docker
+  docker info >/dev/null || die "Docker daemon is unavailable."
+  docker compose version >/dev/null || die "Docker Compose is unavailable."
+  ok "Docker $(docker --version | cut -d' ' -f3 | tr -d ',') / $(docker compose version --short)"
+}
+
+install_deps(){
+  section "📦 Preparing system"
+  fix_duplicate_sury
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y ca-certificates curl git jq openssl nginx ufw
+  install_docker
+  systemctl enable --now nginx
+}
+
+valid_domain(){
+  local d="$1"
+  [[ -z "$d" ]] && return 0
+  [[ "$d" != "localhost" ]] || return 1
+  [[ "$d" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]]
+}
+valid_email(){ [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
+public_ip(){ curl -4fsS --max-time 8 https://api.ipify.org || hostname -I | awk '{print $1}'; }
+secret(){ openssl rand -hex 32; }
+
 write_env(){
-  section "🔐 Configuring production secrets"
-  if [[ ! -f "$ROOT/.env" ]]; then
-    [[ -f "$ROOT/.env.example" ]] || die "Missing both .env and .env.example in $ROOT"
-    cp "$ROOT/.env.example" "$ROOT/.env"
-  fi
-  local dbpass jwt cookie wings nodekey bootstrap
-  dbpass="$(secret)"; jwt="$(secret)"; cookie="$(secret)"; wings="$(secret)"; nodekey="$(secret)"; bootstrap="$(secret)"
-  python3 - "$ROOT/.env" "$dbpass" "$jwt" "$cookie" "$wings" "$nodekey" "$bootstrap" "$PANEL_ORIGIN" "$ADMIN_USERNAME" "$ADMIN_EMAIL" "$ADMIN_PASSWORD" <<'PY'
+  section "🔐 Creating configuration"
+  [[ -f .env ]] || cp .env.example .env
+  local db jwt cookie wings
+  db="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2- || true)"; [[ -n "$db" && "$db" != CHANGE_ME ]] || db="$(secret)"
+  jwt="$(grep '^JWT_SECRET=' .env | cut -d= -f2- || true)"; [[ -n "$jwt" && "$jwt" != CHANGE_ME ]] || jwt="$(secret)"
+  cookie="$(grep '^COOKIE_SECRET=' .env | cut -d= -f2- || true)"; [[ -n "$cookie" && "$cookie" != CHANGE_ME ]] || cookie="$(secret)"
+  wings="$(grep '^WINGS_SHARED_SECRET=' .env | cut -d= -f2- || true)"; [[ -n "$wings" && "$wings" != CHANGE_ME ]] || wings="$(secret)"
+  export DBPASS="$db" JWT="$jwt" COOKIE="$cookie" WINGS="$wings" ORIGIN="$PANEL_ORIGIN"
+  python3 - <<'PY'
 from pathlib import Path
-import sys,re
-p=Path(sys.argv[1]); text=p.read_text()
-vals={'POSTGRES_PASSWORD':sys.argv[2],'JWT_SECRET':sys.argv[3],'COOKIE_SECRET':sys.argv[4],'WINGS_SHARED_SECRET':sys.argv[5],'NODE_ENCRYPTION_KEY':sys.argv[6],'JZ_BOOTSTRAP_TOKEN':sys.argv[7],'WEB_ORIGIN':sys.argv[8],'ADMIN_USERNAME':sys.argv[9],'ADMIN_EMAIL':sys.argv[10],'ADMIN_PASSWORD':sys.argv[11],'NODE_ENV':'production'}
+import os, re
+p=Path('.env')
+text=p.read_text()
+vals={
+ 'POSTGRES_PASSWORD':os.environ['DBPASS'],
+ 'DATABASE_URL':'postgresql://jz:${POSTGRES_PASSWORD}@postgres:5432/jz',
+ 'REDIS_URL':'redis://redis:6379',
+ 'JWT_SECRET':os.environ['JWT'],
+ 'COOKIE_SECRET':os.environ['COOKIE'],
+ 'WINGS_SHARED_SECRET':os.environ['WINGS'],
+ 'PANEL_ORIGIN':os.environ['ORIGIN'],
+ 'NODE_ENV':'production'
+}
 for k,v in vals.items():
-    text=re.sub(rf'^{re.escape(k)}=.*$',f'{k}={v}',text,flags=re.M)
-    if not re.search(rf'^{re.escape(k)}=',text,re.M): text += f'\n{k}={v}'
-text=re.sub(r'^DATABASE_URL=.*$', 'DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}', text, flags=re.M)
-text=re.sub(r'^DATABASE_SSL=.*$', 'DATABASE_SSL=false', text, flags=re.M)
-p.write_text(text); p.chmod(0o600)
+    pattern=rf'^{re.escape(k)}=.*$'
+    if re.search(pattern,text,re.M): text=re.sub(pattern,f'{k}={v}',text,flags=re.M)
+    else: text += f'\n{k}={v}'
+p.write_text(text)
+p.chmod(0o600)
 PY
-  ok "Production environment created."
+  ok "Production .env ready."
 }
-configure_domain(){
-  local domain="$1"; validate_domain "$domain"
-  local host="$domain"; [[ -z "$host" ]] && host="$(get_public_ip)"
-  PANEL_ORIGIN="http://$host"
-  section "🌐 Panel address"
-  echo "Panel URL will be: $PANEL_ORIGIN"
-  if [[ "$host" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    cat >/etc/nginx/sites-available/jz-panel.conf <<NG
+
+configure_nginx(){
+  local host="$1"
+  section "🌐 Configuring Nginx for $host"
+  cat >/etc/nginx/sites-available/jz-panel.conf <<EOF2
 server {
- listen 80 default_server; server_name _; client_max_body_size 200m;
- location / { proxy_pass http://127.0.0.1:5173; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; }
- location /api/ { proxy_pass http://127.0.0.1:4000/api/; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Forwarded-Proto \$scheme; }
- location /ws/ { proxy_pass http://127.0.0.1:4001/api/ws/; proxy_http_version 1.1; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host \$host; }
+    listen 80;
+    server_name $host;
+    client_max_body_size 200m;
+
+    location / {
+        proxy_pass http://127.0.0.1:5173;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location /api/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location /ws/ {
+        proxy_pass http://127.0.0.1:4001/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
 }
-NG
-  else
-    cat >/etc/nginx/sites-available/jz-panel.conf <<NG
-server {
- listen 80; server_name $host; client_max_body_size 200m;
- location / { proxy_pass http://127.0.0.1:5173; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; }
- location /api/ { proxy_pass http://127.0.0.1:4000/api/; proxy_http_version 1.1; proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr; proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme; }
- location /ws/ { proxy_pass http://127.0.0.1:4001/api/ws/; proxy_http_version 1.1; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host \$host; }
-}
-NG
-  fi
+EOF2
   ln -sfn /etc/nginx/sites-available/jz-panel.conf /etc/nginx/sites-enabled/jz-panel.conf
-  rm -f /etc/nginx/sites-enabled/default
-  nginx -t >/dev/null; systemctl reload nginx
-  printf '%s\n' "$PANEL_ORIGIN" > "$STATE/url"
-  ok "Nginx configured for $PANEL_ORIGIN"
-}
-compose(){
-  section "🐳 Building J&Z Panel services"
-  cd "$ROOT"
-  docker compose config >/dev/null || die "docker-compose.yml is invalid."
-  if ! docker compose build --pull --progress plain; then
-    docker compose ps || true
-    docker compose logs --no-color --tail=160 api worker ws web || true
-    die "Docker image build failed."
+  if [[ -e /etc/nginx/sites-enabled/default && ! -e /etc/nginx/sites-enabled/default.jz-backup ]]; then
+    mv /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.jz-backup
   fi
-  docker compose up -d
+  nginx -t
+  systemctl reload nginx
+  ok "Nginx configured."
+}
+
+start_stack(){
+  section "🐳 Building J&Z services"
+  cd "$ROOT"
+  docker compose config >/dev/null
+  docker compose build --pull --progress plain
+  docker compose up -d --remove-orphans
   for i in $(seq 1 60); do
-    if curl -fsS http://127.0.0.1:4000/api/ready >/dev/null 2>&1; then ok "API is ready"; break; fi
-    [[ $i -eq 60 ]] && { docker compose ps; docker compose logs --tail=120 api worker ws web; die "J&Z services did not become ready."; }
+    if curl -fsS http://127.0.0.1:4000/api/ready >/dev/null 2>&1; then ok "API is ready."; break; fi
+    [[ $i -eq 60 ]] && { docker compose ps; docker compose logs --tail=100 api worker ws web; die "Services did not become ready."; }
     sleep 2
   done
   docker compose ps
 }
+
 https(){
-  local domain="$1"; [[ "$domain" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || return 0
-  read -rp "🔒 Enable Let's Encrypt HTTPS for $domain? [Y/n]: " ans; ans="${ans:-Y}"
-  [[ "${ans,,}" == "y" ]] || return 0
-  local resolved public_ip
-  resolved="$(getent ahostsv4 "$domain" | awk 'NR==1{print $1}')"
-  public_ip="$(get_public_ip)"
-  if [[ -z "$resolved" || "$resolved" != "$public_ip" ]]; then
-    warn "DNS check failed for $domain (resolved=${resolved:-none}, VPS=$public_ip). HTTPS was skipped."
-    return 0
-  fi
+  local domain="$1"
+  [[ "$domain" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || return 0
+  read -rp "🔒 Enable Let's Encrypt HTTPS now? [Y/n]: " ans
+  [[ "${ans:-Y}" =~ ^[Yy]$ ]] || return 0
   apt-get install -y certbot python3-certbot-nginx
-  certbot --nginx -d "$domain" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
-  PANEL_ORIGIN="https://$domain"; sed -i "s#^WEB_ORIGIN=.*#WEB_ORIGIN=$PANEL_ORIGIN#" "$ROOT/.env"
+  read -rp "📧 Let's Encrypt email (recommended): " email
+  valid_email "$email" || die "A valid email is required for HTTPS."
+  certbot --nginx -d "$domain" --non-interactive --agree-tos --email "$email" --redirect
+  PANEL_ORIGIN="https://$domain"
+  sed -i "s#^PANEL_ORIGIN=.*#PANEL_ORIGIN=$PANEL_ORIGIN#" .env
   ok "HTTPS enabled: $PANEL_ORIGIN"
-  cd "$ROOT"
-  docker compose up -d --force-recreate api web ws >/dev/null
-  sleep 3
-  ok "Services restarted with HTTPS origin."
 }
-wings(){
-  section "🪽 Installing J&Z Wings"
-  cd "$ROOT/wings"; go build -o /tmp/jz-wings .; install -Dm755 /tmp/jz-wings /usr/local/bin/jz-wings
-  mkdir -p /etc/jz /var/lib/jz-wings/servers
-  cat >/etc/systemd/system/jz-wings.service <<'UNIT'
-[Unit]
-Description=J&Z Wings
-After=docker.service network-online.target
-Wants=network-online.target
-Requires=docker.service
-[Service]
-Type=simple
-EnvironmentFile=/etc/jz/wings.env
-ExecStart=/usr/local/bin/jz-wings
-Restart=always
-RestartSec=3
-LimitNOFILE=1048576
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  if [[ "$MODE" == "combo" ]]; then
-    local token name address response nodeid secret
-    token="$(grep '^JZ_BOOTSTRAP_TOKEN=' "$ROOT/.env" | cut -d= -f2-)"
-    name="$WINGS_NODE_NAME"; address="http://127.0.0.1:$WINGS_PORT"
-    for i in $(seq 1 60); do curl -fsS http://127.0.0.1:4000/api/ready >/dev/null 2>&1 && break; sleep 2; done
-    response="$(curl -fsS -X POST http://127.0.0.1:4000/api/bootstrap/local-node -H 'content-type: application/json' -H "x-jz-bootstrap-token: $token" -d "{\"name\":\"$name\",\"address\":\"$address\",\"location\":\"local\"}")" || die "Panel/Wings bootstrap failed."
-    nodeid="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["node"]["id"])' <<<"$response")"
-    secret="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["secret"])' <<<"$response")"
-    cat >/etc/jz/wings.env <<EOF2
-JZ_PANEL_URL=http://127.0.0.1:4000
-JZ_NODE_ID=$nodeid
-WINGS_SHARED_SECRET=$secret
-WINGS_BIND=:$WINGS_PORT
-WINGS_SERVERS_ROOT=/var/lib/jz-wings/servers
-DOCKER_HOST=unix:///var/run/docker.sock
-EOF2
-  else
-    [[ -n "${EXTERNAL_WINGS_SECRET:-}" ]] || die "Wings-only mode requires a node secret from J&Z Panel."
-    cat >/etc/jz/wings.env <<EOF2
-JZ_PANEL_URL=$EXISTING_PANEL_URL
-JZ_NODE_ID=$EXTERNAL_NODE_ID
-WINGS_SHARED_SECRET=$EXTERNAL_WINGS_SECRET
-WINGS_BIND=:$WINGS_PORT
-WINGS_SERVERS_ROOT=/var/lib/jz-wings/servers
-DOCKER_HOST=unix:///var/run/docker.sock
-EOF2
-  fi
-  chmod 600 /etc/jz/wings.env
-  systemctl enable --now jz-wings
-  sleep 2
-  systemctl is-active --quiet jz-wings || { journalctl -u jz-wings -n 80 --no-pager; die "Wings failed to start."; }
-  ok "Wings is running on port $WINGS_PORT"
+
+firewall(){
+  section "🛡️ Firewall"
+  ufw allow 80/tcp >/dev/null
+  ufw allow 443/tcp >/dev/null
+  local ssh_port
+  ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"
+  [[ -n "$ssh_port" ]] || ssh_port=22
+  ufw allow "$ssh_port/tcp" >/dev/null
+  ufw --force enable >/dev/null
+  ok "UFW enabled; SSH $ssh_port, HTTP 80, HTTPS 443."
 }
-firewall(){ section "🛡️ Firewall"; ufw allow OpenSSH; ufw allow 80/tcp; ufw allow 443/tcp; ufw allow "$WINGS_PORT"/tcp; ufw --force enable; ok "Firewall configured."; }
-health(){ section "🩺 Final diagnostics"; cd "$ROOT"; docker compose ps; curl -fsS http://127.0.0.1:4000/api/health >/dev/null && ok "API health"; curl -fsS http://127.0.0.1:5173/ >/dev/null && ok "Web UI"; systemctl is-active --quiet jz-wings && ok "Wings service" || warn "Wings not installed"; ss -lnt | grep -q ":$WINGS_PORT " && ok "Wings port $WINGS_PORT" || true; }
-uninstall(){ section "🗑️ Uninstall"; read -rp "Remove J&Z containers, database volume, Nginx config and Wings? [y/N]: " a; [[ "${a,,}" == y ]] || return; cd "$ROOT"; docker compose down -v --remove-orphans || true; systemctl disable --now jz-wings 2>/dev/null || true; rm -f /etc/systemd/system/jz-wings.service /usr/local/bin/jz-wings /etc/jz/wings.env; systemctl daemon-reload; rm -f /etc/nginx/sites-enabled/jz-panel.conf /etc/nginx/sites-available/jz-panel.conf; systemctl reload nginx || true; rm -rf "$STATE"; ok "J&Z services removed; Docker itself was left installed."; }
+
+panel_install(){
+  section "🚀 J&Z Panel installation"
+  read -rp "🌐 Panel domain (blank = VPS IP): " DOMAIN
+  if [[ -n "$DOMAIN" ]]; then valid_domain "$DOMAIN" || die "Invalid domain: $DOMAIN"; else DOMAIN="$(public_ip)"; fi
+  PANEL_ORIGIN="http://$DOMAIN"
+  write_env
+  configure_nginx "$DOMAIN"
+  start_stack
+  https "$DOMAIN"
+  firewall
+  section "🎉 Installation complete"
+  echo "Panel: $PANEL_ORIGIN"
+  echo "Health: $PANEL_ORIGIN/api/health"
+  echo "Log: $LOG"
+}
+
 repair(){
   section "🛠️ Repair"
-  apt
+  install_deps
   cd "$ROOT"
-  [[ -f "$ROOT/.env" ]] || { [[ -f "$ROOT/.env.example" ]] && cp "$ROOT/.env.example" "$ROOT/.env" || die "Missing .env and .env.example."; }
+  [[ -f .env ]] || cp .env.example .env
+  docker compose config >/dev/null
   docker compose down --remove-orphans || true
-  if ! docker compose build --pull --progress plain; then
-    docker compose ps || true
-    docker compose logs --no-color --tail=160 api worker ws web || true
-    die "Repair build failed."
-  fi
-  docker compose up -d
-  health
+  docker compose build --pull --progress plain
+  docker compose up -d --remove-orphans
+  curl -fsS http://127.0.0.1:4000/api/ready >/dev/null
+  ok "Repair completed."
 }
-update(){
-  section "🔄 Update"
+health(){
+  section "🩺 Health"
   cd "$ROOT"
-  git pull --ff-only || warn "Not a git checkout; continuing with local files."
-  [[ -f "$ROOT/.env" ]] || { [[ -f "$ROOT/.env.example" ]] && cp "$ROOT/.env.example" "$ROOT/.env" || die "Missing environment file."; }
-  if ! docker compose build --pull --progress plain; then
-    docker compose logs --no-color --tail=160 api worker ws web || true
-    die "Update build failed."
-  fi
-  docker compose up -d
-  health
+  docker compose ps
+  curl -fsS http://127.0.0.1:4000/api/health >/dev/null && ok "API healthy" || warn "API unhealthy"
+  curl -fsS http://127.0.0.1:5173/ >/dev/null && ok "Web healthy" || warn "Web unhealthy"
+  docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG && ok "Redis healthy" || warn "Redis unhealthy"
+  docker compose exec -T postgres pg_isready -U jz -d jz >/dev/null 2>&1 && ok "PostgreSQL healthy" || warn "PostgreSQL unhealthy"
 }
-banner(){ clear 2>/dev/null || true; echo -e "${ORANGE}       ██╗ █████╗ ███╗   ██╗███████╗\n       ██║██╔══██╗████╗  ██║╚══███╔╝\n       ██║███████║██╔██╗ ██║  ███╔╝\n  ██   ██║██╔══██║██║╚██╗██║ ███╔╝\n  ╚█████╔╝██║  ██║██║ ╚████║███████╗\n   ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝${RESET}\n                    ${WHITE}J&Z PANEL${RESET}\n"; }
-install(){
-  section "🚀 J&Z Panel Installation"
-  MODE="$1"
-  if [[ "$MODE" != "wings" ]]; then
-    read -rp "🌐 Panel domain (example: panel.example.com, blank = VPS IP): " PANEL_DOMAIN
-    validate_domain "$PANEL_DOMAIN"
-    if [[ -n "$PANEL_DOMAIN" ]]; then PANEL_HOST="$PANEL_DOMAIN"; else PANEL_HOST="$(get_public_ip)"; fi
-    PANEL_ORIGIN="http://$PANEL_HOST"
-    read -rp "👤 Admin username [admin]: " ADMIN_USERNAME; ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    read -rp "📧 Admin email: " ADMIN_EMAIL
-    [[ "$ADMIN_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]] || die "Valid admin email required."
-    while :; do read -rsp "🔑 Admin password (12+ chars): " ADMIN_PASSWORD; echo; [[ ${#ADMIN_PASSWORD} -ge 12 ]] && break; warn "Password must be at least 12 characters."; done
-    configure_domain "$PANEL_DOMAIN"
-    WINGS_PORT=8080; WINGS_NODE_NAME="Local-01"
-    write_env
-    compose
-    https "$PANEL_DOMAIN"
-    health
-  fi
-  if [[ "$MODE" == "combo" ]]; then wings; firewall; else health; fi
-  section "🎉 Installation complete"
-  echo -e "${WHITE}Panel: ${CYAN}${PANEL_ORIGIN}${RESET}"
-  [[ "$MODE" == "combo" ]] && echo -e "${WHITE}Wings: ${CYAN}port $WINGS_PORT${RESET}"
-  echo -e "${WHITE}Admin: ${CYAN}$ADMIN_EMAIL${RESET}"
-  echo -e "${CYAN}📋 Log: $LOG${RESET}"
+backup(){
+  section "💾 Backup"
+  mkdir -p "$STATE/backups"
+  cd "$ROOT"
+  local out="$STATE/backups/jz-$(date +%Y%m%d-%H%M%S).sql"
+  docker compose exec -T postgres pg_dump -U jz -d jz >"$out"
+  chmod 600 "$out"
+  ok "Database backup: $out"
 }
-main(){ root; os; banner; echo "1) 🟧 Panel + 🪽 Wings"; echo "2) 🟧 Panel"; echo "3) 🪽 Wings"; echo "4) 🛠️ Repair"; echo "5) 🔄 Update"; echo "6) 🩺 Diagnostics"; echo "7) 🗑️ Uninstall"; echo "8) Exit"; read -rp "Select an option: " c; case "$c" in 1) apt; install combo;; 2) apt; install panel;; 3) apt; MODE=wings; read -rp "🌐 Existing Panel URL (example: https://panel.example.com): " EXISTING_PANEL_URL; read -rp "🆔 Node ID: " EXTERNAL_NODE_ID; read -rsp "🔐 Node secret: " EXTERNAL_WINGS_SECRET; echo; WINGS_PORT=8080; wings; firewall; health;; 4) repair;; 5) update;; 6) health;; 7) uninstall;; 8) exit 0;; *) die "Invalid option.";; esac; }
+uninstall(){
+  section "🗑️ Uninstall"
+  read -rp "Remove J&Z containers and database volume? [y/N]: " a
+  [[ "${a,,}" == y ]] || return
+  cd "$ROOT"
+  docker compose down -v --remove-orphans || true
+  rm -f /etc/nginx/sites-enabled/jz-panel.conf /etc/nginx/sites-available/jz-panel.conf
+  nginx -t && systemctl reload nginx || true
+  rm -rf "$STATE"
+  ok "J&Z application removed. Docker was left installed."
+}
+
+banner(){
+  clear 2>/dev/null || true
+  cat <<'EOF2'
+╔════════════════════════════════════════════════════════════╗
+║                     🚀 J&Z PANEL                         ║
+║             Full Panel + Wings Stack                     ║
+║                  🟧 Orange / White                        ║
+╚════════════════════════════════════════════════════════════╝
+EOF2
+}
+
+main(){
+  require_root; check_os; banner
+  echo "1) 🟧 Panel + 🪽 Wings"
+  echo "2) 🟧 Panel only"
+  echo "3) 🪽 Wings only"
+  echo "4) 🛠️ Repair"
+  echo "5) 🔄 Update"
+  echo "6) 🩺 Health"
+  echo "7) 💾 Backup"
+  echo "8) 🗑️ Uninstall"
+  echo "9) Exit"
+  read -rp "Select [1-9]: " c
+  case "$c" in
+    1) die "The full Panel + Wings release is not included in this foundation ZIP yet. Use Panel only for this tested foundation.";;
+    2) install_deps; panel_install;;
+    3) die "The full Wings daemon is not included in this foundation ZIP yet.";;
+    4) repair;;
+    5) repair;;
+    6) health;;
+    7) backup;;
+    8) uninstall;;
+    9) exit 0;;
+    *) die "Invalid option.";;
+  esac
+}
 main "$@"
