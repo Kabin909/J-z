@@ -1,0 +1,8 @@
+.env
+*.log
+node_modules/
+**/node_modules/
+**/dist/
+wings/jz-wings
+.wings/
+.DS_Store

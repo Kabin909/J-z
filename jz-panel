@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "${1:-menu}" in
+ status) cd "$ROOT"; docker compose ps; systemctl status jz-wings --no-pager 2>/dev/null || true ;;
+ health) "$ROOT/installer/install.sh" <<<"6" ;;
+ repair) "$ROOT/installer/install.sh" <<<"4" ;;
+ update) "$ROOT/installer/install.sh" <<<"5" ;;
+ backup) mkdir -p /var/backups/jz-panel; cd "$ROOT"; docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-jz}" "${POSTGRES_DB:-jz}" > "/var/backups/jz-panel/db-$(date +%Y%m%d-%H%M%S).sql"; tar -czf "/var/backups/jz-panel/files-$(date +%Y%m%d-%H%M%S).tar.gz" --exclude=node_modules --exclude=.git .; echo "Backup saved under /var/backups/jz-panel" ;;
+ uninstall) "$ROOT/installer/install.sh" <<<"8" ;;
+ *) echo 'J&Z Panel management'; echo 'status  health  repair  update  backup  uninstall';;
+esac
