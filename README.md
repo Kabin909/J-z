@@ -1,28 +1,35 @@
-# J&Z Panel — Hardened rebuild
+# J&Z Panel — clean VPS foundation
 
-A hardened Node/React control-panel foundation with PostgreSQL, Redis, API, worker, WebSocket service, Nginx reverse proxy, HTTPS installer and a local J&Z Wings node agent.
+This is a **new project**, independent of the old J&Z ZIP. It contains no VPS IP, SSH username, SSH password, or other private deployment details.
 
-## Included
-- Panel + Wings installer menu with domain/IP prompt
-- Automatic `.env` generation and secret creation
-- PostgreSQL + Redis health/readiness checks
-- Persistent user registration/login using JWT
-- Admin bootstrap from installer credentials
-- Server create/list/delete API and dashboard UI
-- Responsive dark/orange UI, favicon, animations and mobile layout
-- Docker Compose deployment
-- Nginx + optional Let's Encrypt
-- UFW setup that preserves the detected SSH port
-- Repair, update, health, backup and uninstall actions
-- Fixed ioredis TypeScript constructor compatibility problem
-- Local Go Wings node agent with systemd and `/health`
+## What this release fixes
 
-## Important scope note
-The included `jz-wings` is a J&Z node agent, not a drop-in implementation of the Pterodactyl Wings protocol. Full Pterodactyl-compatible node orchestration requires the Panel-side Wings API/protocol and server lifecycle implementation. This rebuild deliberately does not pretend those interfaces exist.
+- Correct `ioredis` default import for the worker TypeScript build.
+- Pinned package versions instead of floating `latest` versions.
+- Node 22 + npm 10 compatibility target.
+- Docker Compose health checks for PostgreSQL, Redis and API.
+- Internal API/WebSocket ports bound to `127.0.0.1` instead of being exposed publicly.
+- Robust Debian 12+/Ubuntu 22.04+ checks.
+- Docker CE + Buildx + Compose plugin installation when Docker is missing.
+- Duplicate Sury PHP source detection/disablement for the common duplicate-source warning.
+- Nginx configuration validation before reload.
+- Domain validation and VPS-IP fallback.
+- Optional Let's Encrypt HTTPS with an explicit email prompt.
+- UFW rules that preserve the detected SSH port.
+- Persistent installer log at `/var/log/jz-panel-install.log`.
+- Secrets generated locally with OpenSSL and never hardcoded.
+- Browser favicon only; no forced logo on the web page.
 
-## Validation performed
-- `bash -n installer/install.sh` — passed
-- Go build of `wings` — passed
-- JSON syntax checks — passed
-- Docker Compose YAML parse — passed
-- Full npm/Vite/TypeScript build could not be executed in this environment because package installation timed out while fetching dependencies. The previous worker error was addressed by using a runtime-safe CommonJS loading path for ioredis.
+## Important scope
+
+This ZIP is a **foundation release**, not yet a finished Pterodactyl replacement. The production authentication system, user/admin RBAC, server lifecycle API, file manager, plugin/mod manager, node registration protocol, and complete Wings daemon still require implementation and integration tests. The installer therefore does not pretend that a missing Wings implementation is already production-ready.
+
+## Install
+
+```bash
+sudo bash install.sh
+```
+
+The installer asks for the panel domain. Leave it blank to use the VPS public IPv4 address.
+
+For a public domain, point DNS to the VPS first. HTTPS can then be enabled during installation.
