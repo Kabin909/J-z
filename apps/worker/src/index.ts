@@ -1,4 +1,7 @@
-import Redis from "ioredis";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const Redis: any = require("ioredis");
 
 const redis = new Redis(process.env.REDIS_URL || "redis://redis:6379", {
   maxRetriesPerRequest: null,
