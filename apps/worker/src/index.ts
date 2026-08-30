@@ -1,10 +1,9 @@
-import RedisImport from 'ioredis';
+import Redis from 'ioredis';
 import { Pool } from 'pg';
 import crypto from 'node:crypto';
 
 const redisUrl=process.env.REDIS_URL||'redis://localhost:6379';
-const RedisCtor = (RedisImport as any).default ?? (RedisImport as any);
-const redis: any = new RedisCtor(redisUrl);
+const redis = new Redis(redisUrl);
 const db=new Pool({connectionString:process.env.DATABASE_URL});
 const key=crypto.createHash('sha256').update(process.env.NODE_ENCRYPTION_KEY||'jz-development-node-encryption-key-32').digest();
 function decrypt(value:string){const [iv,tag,data]=value.split('.');const d=crypto.createDecipheriv('aes-256-gcm',key,Buffer.from(iv,'base64url'));d.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([d.update(Buffer.from(data,'base64url')),d.final()]).toString('utf8');}

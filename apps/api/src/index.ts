@@ -6,10 +6,9 @@ import rateLimit from '@fastify/rate-limit';
 import argon2 from 'argon2';
 import crypto from 'node:crypto';
 import { Pool } from 'pg';
-import RedisImport from 'ioredis';
+import Redis from 'ioredis';
 import { z } from 'zod';
 
-const RedisCtor = (RedisImport as any).default ?? (RedisImport as any);
 
 const env = z.object({
   NODE_ENV:z.string().default('development'), DATABASE_URL:z.string(), JWT_SECRET:z.string().min(32),
@@ -17,7 +16,7 @@ const env = z.object({
   WINGS_SHARED_SECRET:z.string().min(16), NODE_ENCRYPTION_KEY:z.string().min(32).default('jz-development-node-encryption-key-32'), JZ_BOOTSTRAP_TOKEN:z.string().min(16).optional(),
   ADMIN_USERNAME:z.string().regex(/^[a-zA-Z0-9_.-]{3,32}$/).optional(), ADMIN_EMAIL:z.string().email().optional(), ADMIN_PASSWORD:z.string().min(12).max(256).optional(),
 }).parse(process.env);
-const db = new Pool({connectionString:env.DATABASE_URL,max:20,ssl:env.NODE_ENV==='production'?{rejectUnauthorized:true}:undefined});
+const db = new Pool({connectionString:env.DATABASE_URL,max:20,ssl:process.env.DATABASE_SSL==='true'?{rejectUnauthorized:process.env.DATABASE_SSL_REJECT_UNAUTHORIZED!=='false'}:undefined});
 const app = Fastify({logger:true,genReqId:()=>crypto.randomUUID(),trustProxy:true});
 
 declare module 'fastify' { interface FastifyRequest { user?: {id:string;role:string;permissions:string[]}; } }
@@ -34,7 +33,7 @@ function encrypt(value:string){const iv=crypto.randomBytes(12);const c=crypto.cr
 function decrypt(value:string){const [iv,tag,data]=value.split('.');const d=crypto.createDecipheriv('aes-256-gcm',aesKey,Buffer.from(iv,'base64url'));d.setAuthTag(Buffer.from(tag,'base64url'));return Buffer.concat([d.update(Buffer.from(data,'base64url')),d.final()]).toString('utf8');}
 function clientIp(req:FastifyRequest){return (req.headers['x-forwarded-for']?.toString().split(',')[0]||req.ip).slice(0,64);}
 async function audit(req:FastifyRequest,action:string,targetType:string,targetId:string|null,result:string,metadata:any={}){await db.query('insert into activity_logs(user_id,action,target_type,target_id,result,ip,request_id,metadata) values($1,$2,$3,$4,$5,$6,$7,$8)',[req.user?.id||null,action,targetType,targetId,result,clientIp(req),req.id,metadata]);}
-async function enqueue(job:any){if(!process.env.REDIS_URL)return;const r: any = new RedisCtor(process.env.REDIS_URL);await r.lpush('jz:jobs',JSON.stringify(job));await r.quit();}
+async function enqueue(job:any){if(!process.env.REDIS_URL)return;const r = new Redis(process.env.REDIS_URL);await r.lpush('jz:jobs',JSON.stringify(job));await r.quit();}
 async function wingsRequest(nodeId:string,path:string,method='GET',payload:any=undefined){const q=await db.query('select n.address,nc.secret_encrypted from nodes n join node_credentials nc on nc.node_id=n.id where n.id=$1',[nodeId]);if(!q.rows[0])throw Object.assign(new Error('NODE_NOT_FOUND'),{statusCode:404});const base=q.rows[0].address.replace(/\/$/,'');const body=payload===undefined?'':JSON.stringify(payload);const ts=Math.floor(Date.now()/1000).toString();const material=`${ts}\n${method}\n${path}\n${hash(body)}`;const sig=crypto.createHmac('sha256',decrypt(q.rows[0].secret_encrypted)).update(material).digest('hex');const r=await fetch(`${base}${path}`,{method,headers:{'content-type':'application/json','x-jz-timestamp':ts,'x-jz-signature':sig,'x-jz-node-id':nodeId},body:body||undefined});const text=await r.text();let data:any;try{data=JSON.parse(text)}catch{data={raw:text}}if(!r.ok)throw Object.assign(new Error(data.error||data.raw||'WINGS_REQUEST_FAILED'),{statusCode:r.status});return data;}
 async function serverForUser(req:FastifyRequest,id:string){const q=await db.query('select s.*,n.address from servers s join nodes n on n.id=s.node_id where s.id=$1',[id]);if(!q.rows[0])return null;const s=q.rows[0];if(req.user!.role!=='Super Administrator'&&!req.user!.permissions.includes('servers.view')&&s.owner_id!==req.user!.id)throw Object.assign(new Error('FORBIDDEN'),{statusCode:403});if(req.user!.role!=='Super Administrator'&&s.owner_id!==req.user!.id&&!req.user!.permissions.includes('servers.update'))throw Object.assign(new Error('FORBIDDEN'),{statusCode:403});return s;}
 async function ensureBootstrapAdmin(){const username=process.env.ADMIN_USERNAME?.toLowerCase(),email=process.env.ADMIN_EMAIL?.toLowerCase(),password=process.env.ADMIN_PASSWORD;if(!username||!email||!password)return;const passwordHash=await argon2.hash(password,{type:argon2.argon2id,memoryCost:65536,timeCost:3,parallelism:1});const c=await db.connect();try{await c.query('begin');const r=await c.query('select id from users where email=$1 or username=$2 limit 1',[email,username]);let id:string;if(r.rows[0]){id=r.rows[0].id;await c.query('update users set username=$1,email=$2,password_hash=$3,updated_at=now() where id=$4',[username,email,passwordHash,id]);}else{const u=await c.query('insert into users(username,email,password_hash) values($1,$2,$3) returning id',[username,email,passwordHash]);id=u.rows[0].id;}const role=await c.query("select id from roles where name='Administrator' limit 1");if(role.rows[0])await c.query('insert into user_roles(user_id,role_id) values($1,$2) on conflict do nothing',[id,role.rows[0].id]);await c.query('commit');}catch(e){await c.query('rollback');throw e;}finally{c.release();}}

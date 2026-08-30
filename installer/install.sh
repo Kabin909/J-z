@@ -25,7 +25,10 @@ PY
 }
 write_env(){
   section "🔐 Configuring production secrets"
-  [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
+  if [[ ! -f "$ROOT/.env" ]]; then
+    [[ -f "$ROOT/.env.example" ]] || die "Missing both .env and .env.example in $ROOT"
+    cp "$ROOT/.env.example" "$ROOT/.env"
+  fi
   local dbpass jwt cookie wings nodekey bootstrap
   dbpass="$(secret)"; jwt="$(secret)"; cookie="$(secret)"; wings="$(secret)"; nodekey="$(secret)"; bootstrap="$(secret)"
   python3 - "$ROOT/.env" "$dbpass" "$jwt" "$cookie" "$wings" "$nodekey" "$bootstrap" "$PANEL_ORIGIN" "$ADMIN_USERNAME" "$ADMIN_EMAIL" "$ADMIN_PASSWORD" <<'PY'
@@ -36,7 +39,8 @@ vals={'POSTGRES_PASSWORD':sys.argv[2],'JWT_SECRET':sys.argv[3],'COOKIE_SECRET':s
 for k,v in vals.items():
     text=re.sub(rf'^{re.escape(k)}=.*$',f'{k}={v}',text,flags=re.M)
     if not re.search(rf'^{re.escape(k)}=',text,re.M): text += f'\n{k}={v}'
-text=re.sub(r'^DATABASE_URL=.*$', 'DATABASE_URL=postgresql://jz:${POSTGRES_PASSWORD}@postgres:5432/jz', text, flags=re.M)
+text=re.sub(r'^DATABASE_URL=.*$', 'DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}', text, flags=re.M)
+text=re.sub(r'^DATABASE_SSL=.*$', 'DATABASE_SSL=false', text, flags=re.M)
 p.write_text(text); p.chmod(0o600)
 PY
   ok "Production environment created."
@@ -76,7 +80,11 @@ compose(){
   section "🐳 Building J&Z Panel services"
   cd "$ROOT"
   docker compose config >/dev/null || die "docker-compose.yml is invalid."
-  docker compose build --pull --progress plain
+  if ! docker compose build --pull --progress plain; then
+    docker compose ps || true
+    docker compose logs --no-color --tail=160 api worker ws web || true
+    die "Docker image build failed."
+  fi
   docker compose up -d
   for i in $(seq 1 60); do
     if curl -fsS http://127.0.0.1:4000/api/ready >/dev/null 2>&1; then ok "API is ready"; break; fi
@@ -89,10 +97,21 @@ https(){
   local domain="$1"; [[ "$domain" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || return 0
   read -rp "🔒 Enable Let's Encrypt HTTPS for $domain? [Y/n]: " ans; ans="${ans:-Y}"
   [[ "${ans,,}" == "y" ]] || return 0
+  local resolved public_ip
+  resolved="$(getent ahostsv4 "$domain" | awk 'NR==1{print $1}')"
+  public_ip="$(get_public_ip)"
+  if [[ -z "$resolved" || "$resolved" != "$public_ip" ]]; then
+    warn "DNS check failed for $domain (resolved=${resolved:-none}, VPS=$public_ip). HTTPS was skipped."
+    return 0
+  fi
   apt-get install -y certbot python3-certbot-nginx
-  certbot --nginx -d "$domain" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+  certbot --nginx -d "$domain" --non-interactive --agree-tos --email "$ADMIN_EMAIL" --redirect
   PANEL_ORIGIN="https://$domain"; sed -i "s#^WEB_ORIGIN=.*#WEB_ORIGIN=$PANEL_ORIGIN#" "$ROOT/.env"
   ok "HTTPS enabled: $PANEL_ORIGIN"
+  cd "$ROOT"
+  docker compose up -d --force-recreate api web ws >/dev/null
+  sleep 3
+  ok "Services restarted with HTTPS origin."
 }
 wings(){
   section "🪽 Installing J&Z Wings"
@@ -151,8 +170,32 @@ EOF2
 firewall(){ section "🛡️ Firewall"; ufw allow OpenSSH; ufw allow 80/tcp; ufw allow 443/tcp; ufw allow "$WINGS_PORT"/tcp; ufw --force enable; ok "Firewall configured."; }
 health(){ section "🩺 Final diagnostics"; cd "$ROOT"; docker compose ps; curl -fsS http://127.0.0.1:4000/api/health >/dev/null && ok "API health"; curl -fsS http://127.0.0.1:5173/ >/dev/null && ok "Web UI"; systemctl is-active --quiet jz-wings && ok "Wings service" || warn "Wings not installed"; ss -lnt | grep -q ":$WINGS_PORT " && ok "Wings port $WINGS_PORT" || true; }
 uninstall(){ section "🗑️ Uninstall"; read -rp "Remove J&Z containers, database volume, Nginx config and Wings? [y/N]: " a; [[ "${a,,}" == y ]] || return; cd "$ROOT"; docker compose down -v --remove-orphans || true; systemctl disable --now jz-wings 2>/dev/null || true; rm -f /etc/systemd/system/jz-wings.service /usr/local/bin/jz-wings /etc/jz/wings.env; systemctl daemon-reload; rm -f /etc/nginx/sites-enabled/jz-panel.conf /etc/nginx/sites-available/jz-panel.conf; systemctl reload nginx || true; rm -rf "$STATE"; ok "J&Z services removed; Docker itself was left installed."; }
-repair(){ section "🛠️ Repair"; apt; [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"; cd "$ROOT"; docker compose down --remove-orphans || true; docker compose build --pull; docker compose up -d; health; }
-update(){ section "🔄 Update"; cd "$ROOT"; git pull --ff-only || warn "Not a git checkout; continuing with local files."; docker compose build --pull; docker compose up -d; health; }
+repair(){
+  section "🛠️ Repair"
+  apt
+  cd "$ROOT"
+  [[ -f "$ROOT/.env" ]] || { [[ -f "$ROOT/.env.example" ]] && cp "$ROOT/.env.example" "$ROOT/.env" || die "Missing .env and .env.example."; }
+  docker compose down --remove-orphans || true
+  if ! docker compose build --pull --progress plain; then
+    docker compose ps || true
+    docker compose logs --no-color --tail=160 api worker ws web || true
+    die "Repair build failed."
+  fi
+  docker compose up -d
+  health
+}
+update(){
+  section "🔄 Update"
+  cd "$ROOT"
+  git pull --ff-only || warn "Not a git checkout; continuing with local files."
+  [[ -f "$ROOT/.env" ]] || { [[ -f "$ROOT/.env.example" ]] && cp "$ROOT/.env.example" "$ROOT/.env" || die "Missing environment file."; }
+  if ! docker compose build --pull --progress plain; then
+    docker compose logs --no-color --tail=160 api worker ws web || true
+    die "Update build failed."
+  fi
+  docker compose up -d
+  health
+}
 banner(){ clear 2>/dev/null || true; echo -e "${ORANGE}       ██╗ █████╗ ███╗   ██╗███████╗\n       ██║██╔══██╗████╗  ██║╚══███╔╝\n       ██║███████║██╔██╗ ██║  ███╔╝\n  ██   ██║██╔══██║██║╚██╗██║ ███╔╝\n  ╚█████╔╝██║  ██║██║ ╚████║███████╗\n   ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝${RESET}\n                    ${WHITE}J&Z PANEL${RESET}\n"; }
 install(){
   section "🚀 J&Z Panel Installation"
@@ -168,9 +211,10 @@ install(){
     while :; do read -rsp "🔑 Admin password (12+ chars): " ADMIN_PASSWORD; echo; [[ ${#ADMIN_PASSWORD} -ge 12 ]] && break; warn "Password must be at least 12 characters."; done
     configure_domain "$PANEL_DOMAIN"
     WINGS_PORT=8080; WINGS_NODE_NAME="Local-01"
-    https "$PANEL_DOMAIN"
     write_env
     compose
+    https "$PANEL_DOMAIN"
+    health
   fi
   if [[ "$MODE" == "combo" ]]; then wings; firewall; else health; fi
   section "🎉 Installation complete"

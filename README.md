@@ -21,3 +21,18 @@ sudo jz-panel
 ```
 
 Available operations include status/health, repair, update, backup, and uninstall.
+
+
+## v0.8.0-patch1 installer/build fixes
+
+This release fixes the Docker build issue caused by the `ioredis` TypeScript constructor import in the API/worker workspaces. It also makes the installer safer around `.env` creation, bundled PostgreSQL TLS, DNS/HTTPS ordering, and failed Docker builds.
+
+Before installation:
+
+```bash
+cd /opt/jz-panel
+bash installer/preflight.sh
+sudo bash installer/install.sh
+```
+
+For a domain, point its A record to the VPS IPv4 first. The installer verifies DNS before requesting Let's Encrypt. If DNS is not ready, it leaves the panel on HTTP rather than failing the installation.

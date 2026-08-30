@@ -37,6 +37,7 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-jz-local-jwt-secret-change-me-1234567890}
       COOKIE_SECRET: ${COOKIE_SECRET:-jz-local-cookie-secret-change-me-1234567890}
@@ -64,6 +65,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
       NODE_ENCRYPTION_KEY: ${NODE_ENCRYPTION_KEY:-jz-local-node-encryption-key-1234567890}
     depends_on:
       postgres: {condition: service_healthy}
@@ -83,6 +85,7 @@ services:
       API_PORT: 4000
       WS_PORT: 4001
       DATABASE_URL: postgresql://${POSTGRES_USER:-jz}:${POSTGRES_PASSWORD:-jz-local-postgres-change-me-please-1234567890}@postgres:5432/${POSTGRES_DB:-jz}
+      DATABASE_SSL: ${DATABASE_SSL:-false}
       COOKIE_SECRET: ${COOKIE_SECRET:-jz-local-cookie-secret-change-me-1234567890}
       WINGS_SHARED_SECRET: ${WINGS_SHARED_SECRET:-jz-local-wings-secret-change-me-1234567890}
       NODE_ENCRYPTION_KEY: ${NODE_ENCRYPTION_KEY:-jz-local-node-encryption-key-1234567890}

@@ -74,3 +74,10 @@
 - Added installer VPS workflow and expanded command/reference documentation.
 - Added production threat model and explicit production-gap register.
 - Expanded the UI module pages to read real backend records instead of showing only static placeholders.
+
+
+## 0.8.0-patch1
+- Fixed ioredis TypeScript constructor compatibility in API and worker.
+- Added explicit DATABASE_SSL=false for bundled PostgreSQL.
+- Hardened installer environment creation, DNS/HTTPS ordering, and build diagnostics.
+- Added installer/preflight.sh.
