@@ -17,3 +17,7 @@ test -x "$ROOT/installer/install.sh"
 test -x "$ROOT/installer/generate-env.sh"
 test -f "$ROOT/.env.example"
 echo "[4/4] Done"
+
+# Migration runner validation
+bash -n "$(dirname "$0")/migrate.sh"
+test -x "$(dirname "$0")/migrate.sh"

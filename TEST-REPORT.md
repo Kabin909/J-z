@@ -1,23 +1,29 @@
-# J&Z Panel v3.1.1 — verification report
+# J&Z Panel v3.2.0 — installer hardening report
 
-## Source fixes in this release
+## Installer changes
 
-- Fixed the API login TypeScript syntax error in `apps/api/src/index.ts` (`user.!verifyPassword` -> `!verifyPassword(...)`).
-- Added input normalization/validation for registration and safer login error handling.
-- Kept the constructor-compatible `import { Redis } from "ioredis"` worker implementation.
-- Installer now preserves existing generated database/secret values on repair/reinstall instead of silently rotating the PostgreSQL password against an existing volume.
-- Repair/update now loads the existing `.env` configuration before final health checks.
-- Installer no longer stores the administrator password in `.env` after bootstrap.
-- Build uses `--progress=plain` to avoid the Compose deprecation warning shown by Docker.
+- Existing `.env` secrets are preserved instead of regenerating the PostgreSQL password on every reinstall.
+- PostgreSQL `DATABASE_URL` password is URL-encoded when an existing password contains URI-reserved characters.
+- Transaction snapshots now record whether the previous Docker stack was present/running and capture existing application image IDs.
+- Rollback restores the previous `.env`, Nginx configuration/default site state, UFW changes, and previous application image tags where available.
+- A previously running Docker stack is restarted after rollback instead of being left stopped.
+- HTTPS uses a webroot ACME challenge and J&Z-owned Nginx configuration instead of allowing Certbot to rewrite the reverse proxy configuration.
+- HTTP/HTTPS ordering is explicit: HTTP + ACME validation first, certificate acquisition second, HTTPS Nginx configuration third, production origins fourth, then service recreation and public health checks.
+- WebSocket proxying preserves `/ws` instead of stripping the path.
+- Docker Compose dependencies use health-aware `service_healthy` conditions for API/WS/Web startup ordering.
+- Nginx's default site is backed up and disabled during J&Z installation, then restored on rollback.
+- UFW additions are tracked so failed transactions can remove rules they added and disable UFW again if it was previously inactive.
+- Installer source validation no longer depends on the old named ioredis import syntax.
+- Installer version is now 3.2.0.
 
-## Static checks
+## Validation performed in this environment
 
-- `bash -n install.sh installer/install.sh installer/generate-env.sh installer/validate.sh` — PASS.
-- Previous `//.env` path bug — no match.
-- Previous worker ioredis constructor/import issue — fixed in source.
+- Bash syntax checks: PASS for the root installer and installer helper scripts.
+- Docker Compose YAML parsing: PASS.
+- Docker Compose dependency conditions were structurally checked after the update.
+- Full dependency-backed TypeScript compilation was not completed here because `npm install --omit=optional --no-audit --no-fund` exceeded the available execution timeout.
+- A real Docker build and end-to-end VPS installation must still be run before claiming universal production-zero-error status.
 
-## Runtime verification limitation
+## Important scope note
 
-This build environment does not have Docker available and package installation could not complete within the execution window, so a full Docker build was **not** executed here. The VPS installer itself performs the authoritative Docker build, service readiness, PostgreSQL, Redis, API, WebSocket, Nginx, DNS, ports and optional HTTPS checks and rolls back configuration on failure.
-
-The repository still does not contain the actual Pterodactyl Wings daemon; `wings/` is documentation only. Options that claim a real Wings installation are therefore intentionally refused instead of falsely reporting success.
+The repository still does not contain a real Wings daemon; `wings/` is documentation only. Therefore the installer correctly refuses to claim that option 1/3 can install a functioning Wings daemon from this source.

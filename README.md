@@ -33,3 +33,20 @@ sudo bash install.sh
 The installer asks for the panel domain. Leave it blank to use the VPS public IPv4 address.
 
 For a public domain, point DNS to the VPS first. HTTPS can then be enabled during installation.
+
+## 🗄️ Database migration system
+
+J&Z Panel v3.2.0 uses explicit, versioned PostgreSQL migrations. The Docker PostgreSQL container no longer mounts the migration directory as an automatic `docker-entrypoint-initdb.d` script directory. The installer starts PostgreSQL/Redis first and then runs `installer/migrate.sh`.
+
+Migration state is stored in `schema_migrations` with the migration version, name, SHA-256 checksum, and application timestamp. Each pending migration runs inside a PostgreSQL transaction. Applied migrations are skipped; a checksum mismatch stops the deployment instead of silently changing an already-applied migration.
+
+Existing J&Z databases that were created by the older installer are adopted at migration `001` as a baseline without executing `001_init.sql` again, then any newer migrations are applied normally.
+
+To inspect migration state:
+
+```bash
+cd /opt/jz-panel
+./installer/migrate.sh
+```
+
+New schema changes must be added as a new numbered file such as `003_feature_name.sql`; never edit an already-applied migration.
