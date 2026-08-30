@@ -47,7 +47,7 @@ function auth(req: express.Request, res: express.Response, next: express.NextFun
   }
 }
 
-app.get("/api/health", (_req, res) => res.json({ ok: true, service: "jz-api", version: "1.1.0" }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, service: "jz-api", version: "3.1.1" }));
 app.get("/api/ready", async (_req, res) => {
   try {
     await dbReady();
@@ -59,13 +59,16 @@ app.get("/api/ready", async (_req, res) => {
 
 app.post("/api/auth/register", async (req, res) => {
   const { username, email, password } = req.body ?? {};
-  if (!username || !email || !password || String(password).length < 12) {
+  const normalizedUsername = String(username ?? "").trim();
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  const normalizedPassword = String(password ?? "");
+  if (!/^[A-Za-z0-9_.-]{3,32}$/.test(normalizedUsername) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail) || normalizedPassword.length < 12) {
     return res.status(400).json({ error: "Username, email and a 12+ character password are required" });
   }
   try {
     const result = await pool.query(
       "INSERT INTO users(username,email,password_hash) VALUES($1,$2,$3) RETURNING id,username,email,role",
-      [String(username), String(email).toLowerCase(), hashPassword(String(password))]
+      [normalizedUsername, normalizedEmail, hashPassword(normalizedPassword)]
     );
     const user = result.rows[0];
     res.status(201).json({ user, token: sign(user) });
@@ -77,12 +80,18 @@ app.post("/api/auth/register", async (req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body ?? {};
-  if (!email || !password) return res.status(400).json({ error: "Email and password are required" });
-  const result = await pool.query("SELECT id,username,email,role,password_hash FROM users WHERE email=$1", [String(email).toLowerCase()]);
-  const user = result.rows[0];
-  if (!user || user.!verifyPassword(String(password), user.password_hash)) return res.status(401).json({ error: "Invalid credentials" });
-  delete user.password_hash;
-  res.json({ user, token: sign(user) });
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  const normalizedPassword = String(password ?? "");
+  if (!normalizedEmail || !normalizedPassword) return res.status(400).json({ error: "Email and password are required" });
+  try {
+    const result = await pool.query("SELECT id,username,email,role,password_hash FROM users WHERE email=$1", [normalizedEmail]);
+    const user = result.rows[0];
+    if (!user || !verifyPassword(normalizedPassword, user.password_hash)) return res.status(401).json({ error: "Invalid credentials" });
+    delete user.password_hash;
+    res.json({ user, token: sign(user) });
+  } catch {
+    res.status(503).json({ error: "Authentication service temporarily unavailable" });
+  }
 });
 
 app.get("/api/me", auth, async (req, res) => {

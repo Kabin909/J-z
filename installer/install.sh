@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-VERSION="3.0.0"
+VERSION="3.1.1"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 STATE="/etc/jz-panel"
@@ -116,6 +116,17 @@ valid_ipv4(){ [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1; local IFS
 valid_email(){ [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
 public_ip(){ curl -4fsS --max-time 8 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}'; }
 secret(){ openssl rand -hex 48; }
+env_value(){ grep -E "^${1}=" "$ROOT/.env" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+load_existing_config(){
+  [[ -f "$ROOT/.env" ]] || die "Missing $ROOT/.env; run Panel installation first."
+  PANEL_ORIGIN="$(env_value PANEL_ORIGIN)"
+  [[ -n "$PANEL_ORIGIN" ]] || PANEL_ORIGIN="$(env_value WEB_ORIGIN)"
+  [[ "$PANEL_ORIGIN" =~ ^https?:// ]] || die "Existing .env has no valid PANEL_ORIGIN."
+  PANEL_HOST="${PANEL_ORIGIN#*://}"; PANEL_HOST="${PANEL_HOST%%/*}"
+  if valid_ipv4 "$PANEL_HOST"; then USE_DOMAIN=0; else USE_DOMAIN=1; PANEL_DOMAIN="$PANEL_HOST"; fi
+  ADMIN_EMAIL="$(env_value ADMIN_EMAIL)"
+  ADMIN_USERNAME="$(env_value ADMIN_USERNAME)"
+}
 
 prompt_config(){
   section "⚙️ Panel configuration"
@@ -176,7 +187,18 @@ write_env(){
   [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
   chmod 600 "$ROOT/.env"
   local db jwt cookie wings nodekey bootstrap
-  db="$(secret)"; jwt="$(secret)"; cookie="$(secret)"; wings="$(secret)"; nodekey="$(secret)"; bootstrap="$(secret)"
+  db="$(env_value POSTGRES_PASSWORD)"
+  jwt="$(env_value JWT_SECRET)"
+  cookie="$(env_value COOKIE_SECRET)"
+  wings="$(env_value WINGS_SHARED_SECRET)"
+  nodekey="$(env_value NODE_ENCRYPTION_KEY)"
+  bootstrap="$(env_value JZ_BOOTSTRAP_TOKEN)"
+  if [[ -z "$db" ]]; then db="$(secret)"; fi
+  if [[ -z "$jwt" ]]; then jwt="$(secret)"; fi
+  if [[ -z "$cookie" ]]; then cookie="$(secret)"; fi
+  if [[ -z "$wings" ]]; then wings="$(secret)"; fi
+  if [[ -z "$nodekey" ]]; then nodekey="$(secret)"; fi
+  if [[ -z "$bootstrap" ]]; then bootstrap="$(secret)"; fi
   upsert_env "$ROOT/.env" NODE_ENV production
   upsert_env "$ROOT/.env" APP_NAME 'J&Z Panel'
   upsert_env "$ROOT/.env" PANEL_ORIGIN "$PANEL_ORIGIN"
@@ -194,8 +216,13 @@ write_env(){
   upsert_env "$ROOT/.env" JZ_BOOTSTRAP_TOKEN "$bootstrap"
   upsert_env "$ROOT/.env" ADMIN_USERNAME "$ADMIN_USERNAME"
   upsert_env "$ROOT/.env" ADMIN_EMAIL "$ADMIN_EMAIL"
-  # The API currently has no safe password-seeding endpoint; keep the value only for future bootstrap compatibility.
-  upsert_env "$ROOT/.env" ADMIN_PASSWORD "$ADMIN_PASSWORD"
+  # Do not persist the administrator password in .env; it is only used for initial DB bootstrap.
+  python3 - "$ROOT/.env" <<'PY'
+from pathlib import Path
+p=Path(__import__('sys').argv[1])
+lines=[x for x in p.read_text().splitlines() if not x.startswith('ADMIN_PASSWORD=')]
+p.write_text('\n'.join(lines)+'\n')
+PY
   chmod 600 "$ROOT/.env"
   grep -q '^POSTGRES_PASSWORD=..*' "$ROOT/.env" || die ".env generation failed: POSTGRES_PASSWORD missing"
   grep -q '^DATABASE_URL=' "$ROOT/.env" || die ".env generation failed: DATABASE_URL missing"
@@ -214,7 +241,7 @@ source_check(){
 
 compose_validate(){ cd "$ROOT"; docker compose --env-file .env config >/dev/null; ok "Docker Compose configuration is valid."; }
 
-build_stack(){ section "🏗️ Building J&Z images"; cd "$ROOT"; docker compose --env-file .env build --pull --progress plain; }
+build_stack(){ section "🏗️ Building J&Z images"; cd "$ROOT"; docker compose --env-file .env build --pull --progress=plain; }
 
 start_stack(){
   section "🚀 Starting PostgreSQL / Redis / API / Worker / WS / Web"
@@ -251,7 +278,11 @@ PY
   docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U jz -d jz -v username="$ADMIN_USERNAME" -v email="$ADMIN_EMAIL" -v hash="$hash" <<'SQL'
 INSERT INTO users(username,email,password_hash,role)
 VALUES(:'username',:'email',:'hash','admin')
-ON CONFLICT (username) DO UPDATE SET email=EXCLUDED.email,password_hash=EXCLUDED.password_hash,role='admin';
+ON CONFLICT (username) DO UPDATE
+SET email=EXCLUDED.email,password_hash=EXCLUDED.password_hash,role='admin',updated_at=NOW();
+UPDATE users
+SET username=:'username',password_hash=:'hash',role='admin',updated_at=NOW()
+WHERE email=:'email' AND username<>:'username';
 SQL
   ok "Admin account created/updated."
 }
@@ -337,6 +368,7 @@ panel_install(){
   final_health
   ROLLBACK_NEEDED=0
   section "🎉 Installation complete"
+  echo "J&Z Panel v$VERSION"
   echo "Panel: $PANEL_ORIGIN"
   echo "Admin: $ADMIN_EMAIL"
   echo "Log: $LOG"
@@ -345,7 +377,7 @@ panel_install(){
 repair(){
   ROLLBACK_NEEDED=1
   install_docker
-  [[ -f "$ROOT/.env" ]] || { prompt_config; write_env; }
+  if [[ -f "$ROOT/.env" ]]; then load_existing_config; else prompt_config; write_env; fi
   source_check; compose_validate; build_stack; start_stack; init_db; final_health
   ROLLBACK_NEEDED=0
   ok "Repair completed."

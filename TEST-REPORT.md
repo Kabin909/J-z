@@ -1,25 +1,23 @@
-# J&Z Panel v3.1 — verification report
+# J&Z Panel v3.1.1 — verification report
 
-## Checks run in the build environment
+## Source fixes in this release
 
-- `bash -n install.sh installer/install.sh installer/generate-env.sh installer/validate.sh` — PASS
-- YAML parse of `docker-compose.yml` — PASS
-- `./installer/validate.sh` — PASS (Docker runtime validation skipped because Docker is unavailable in the build environment)
-- Search for the previous `//.env` path bug — no matches
-- Worker import is constructor-compatible: `import { Redis } from "ioredis"`
-- PostgreSQL migration file present and idempotent
-- WebSocket `/health` endpoint implemented
-- Nginx reverse-proxy configuration is generated only after the application stack is healthy
-- HTTPS changes `PANEL_ORIGIN` and recreates API/WS/Web so CORS/origin configuration is not stale
+- Fixed the API login TypeScript syntax error in `apps/api/src/index.ts` (`user.!verifyPassword` -> `!verifyPassword(...)`).
+- Added input normalization/validation for registration and safer login error handling.
+- Kept the constructor-compatible `import { Redis } from "ioredis"` worker implementation.
+- Installer now preserves existing generated database/secret values on repair/reinstall instead of silently rotating the PostgreSQL password against an existing volume.
+- Repair/update now loads the existing `.env` configuration before final health checks.
+- Installer no longer stores the administrator password in `.env` after bootstrap.
+- Build uses `--progress=plain` to avoid the Compose deprecation warning shown by Docker.
 
-## VPS-side checks performed by the installer
+## Static checks
 
-The installer performs OS, architecture, disk, DNS, port, Docker, Compose, source, `.env`, PostgreSQL, Redis, API, Web, WebSocket, Nginx and optional public HTTPS checks.
+- `bash -n install.sh installer/install.sh installer/generate-env.sh installer/validate.sh` — PASS.
+- Previous `//.env` path bug — no match.
+- Previous worker ioredis constructor/import issue — fixed in source.
 
-If a transactional installation fails, it restores the previous `.env` and Nginx configuration and does not delete database volumes or prune Docker images.
+## Runtime verification limitation
 
-## Important limitation
+This build environment does not have Docker available and package installation could not complete within the execution window, so a full Docker build was **not** executed here. The VPS installer itself performs the authoritative Docker build, service readiness, PostgreSQL, Redis, API, WebSocket, Nginx, DNS, ports and optional HTTPS checks and rolls back configuration on failure.
 
-A real Docker build was not executed in this environment because Docker and external package registry access are unavailable here. Therefore this release is **not claimed to be zero-error under every VPS environment**. The installer is designed to fail closed and show the failing service logs instead of reporting a false success.
-
-The current repository also does not contain a real Wings daemon; `wings/` is documentation only. The installer therefore refuses to pretend that option 1/3 is a working Wings deployment.
+The repository still does not contain the actual Pterodactyl Wings daemon; `wings/` is documentation only. Options that claim a real Wings installation are therefore intentionally refused instead of falsely reporting success.
